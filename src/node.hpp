@@ -3,14 +3,15 @@
 #include "utils.hpp"
 #include <wren.hpp>
 
-#include <vector>
+#include <map>
+#include <unordered_map>
 #include <string>
 #include <optional>
 #include <span>
 
 namespace wire {
     // Class that contains the entire state of a single active node
-    // This class contains the Wren VM dedicated to the node and cannot be used concurrently 
+    // This class contains the Wren VMs dedicated to the node and cannot be used concurrently 
 
     class WireNode {
     public:
@@ -23,21 +24,38 @@ namespace wire {
 
         // WiOS interface
 
-        struct WireProc {
+        // TODO: cross-vm args
+        struct WiOSProc {
+            WiOSProc(WireNode* host_node, wire_pid_t pid, std::string_view name) noexcept;
+            ~WiOSProc() noexcept;
+
+            WiOSProc(const WiOSProc&) = delete;
+            WiOSProc& operator=(const WiOSProc&) = delete;
+
+            WrenVM* proc_vm;
+            WireNode* host_node;
+
+            WrenHandle* proc_args_buf;
+
+            // note: WrenHandles are inited after loading the relevant kernel lib
+            WrenHandle* proc_info_class_handle = nullptr;
+
             std::string proc_name;
             
             wire_timestamp_t start_time;
             wire_pid_t proc_id;
         };
-
-        // gets the wren src for the [lib_name] kernel lib
-        std::optional<std::string_view> get_kernel_lib(std::string_view lib_name) noexcept;
+        
+        // gets the source for a wren script installed on this node
+        std::optional<std::string_view> get_source(std::string_view path) const noexcept;
 
         // libproc.wl
-        std::span<WireProc> proc_list() noexcept;
+        std::map<wire_pid_t, WiOSProc>& proc_list() noexcept { return node_active_procs; }
         
-        uint8_t exec(std::string_view src_path, WrenHandle* exec_args) noexcept;
-        uint8_t kill(uint32_t pid) noexcept;
+        void exec(WrenVM* vm, std::string_view src_path) noexcept;
+        void kill(WrenVM* vm, uint32_t pid) noexcept;
+
+        void cleanup_proc(wire_pid_t pid) noexcept;
 
         // libconn.wl
         // TODO: finish WireConn
@@ -46,19 +64,17 @@ namespace wire {
         // TODO:
 
         // checks if [module_name] is a valid kernel lib module (aka can import foreign methods)
-        constexpr static bool is_kernel_lib(std::string_view module_name) noexcept;
-
-
-
+        static bool is_kernel_lib(std::string_view module_name) noexcept;
     private:
-
-        // Wren vm
-        WrenVM* node_vm;
+        void exec_init() noexcept;
 
         // node/WiOS state 
         // std::vector<WireConn> node_conns;
-        std::vector<WrenHandle*> node_active_procs;
+        std::map<wire_pid_t, WiOSProc> node_active_procs;
+        std::map<size_t /*hashed path string*/, std::string> node_installed_sources;
         
+        wire_pid_t next_pid = 1;
+
         // node config
         wire_addr_t local_addr;
     };
